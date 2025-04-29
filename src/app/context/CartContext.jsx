@@ -1,39 +1,45 @@
 // context/CartContext.jsx
-'use client'
+'use client' // This directive is crucial
 
 import { createContext, useContext, useEffect, useState } from 'react'
 
-export const CartContext = createContext()
+export const CartContext = createContext(null)
 
 export function CartProvider({ children }) {
   const [cart, setCart] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
-  // Load from localStorage and sync with API
+  // Load from localStorage on client-side only
   useEffect(() => {
     const savedCart = localStorage.getItem('cart')
     if (savedCart) {
-      setCart(JSON.parse(savedCart))
-      
-      // Optional: Sync with FakeStore API
-      syncCartWithAPI(JSON.parse(savedCart))
+      try {
+        setCart(JSON.parse(savedCart))
+      } catch (err) {
+        console.error('Error parsing cart data:', err)
+        localStorage.removeItem('cart')
+      }
     }
   }, [])
 
   // Save to localStorage when cart changes
   useEffect(() => {
-    localStorage.setItem('cart', JSON.stringify(cart))
+    if (cart.length > 0) {
+      localStorage.setItem('cart', JSON.stringify(cart))
+    }
   }, [cart])
 
   const syncCartWithAPI = async (cartItems) => {
     try {
       setLoading(true)
-      // Using FakeStore API's cart endpoint
       const response = await fetch('https://fakestoreapi.com/carts', {
         method: "POST",
+        headers: {
+          'Content-Type': 'application/json'
+        },
         body: JSON.stringify({
-          userId: 1, // You can replace with actual user ID from auth
+          userId: 1, // Replace with actual user ID from auth
           date: new Date().toISOString(),
           products: cartItems.map(item => ({
             productId: item.id,
@@ -41,11 +47,11 @@ export function CartProvider({ children }) {
           }))
         })
       })
-      const data = await response.json()
-      console.log('Cart synced with API:', data)
+      return await response.json()
     } catch (err) {
       console.error('Error syncing cart:', err)
       setError(err.message)
+      throw err
     } finally {
       setLoading(false)
     }
@@ -65,29 +71,28 @@ export function CartProvider({ children }) {
     }
 
     setCart(newCart)
-    await syncCartWithAPI(newCart)
+    return syncCartWithAPI(newCart)
   }
 
   const removeFromCart = async (productId) => {
     const newCart = cart.filter(item => item.id !== productId)
     setCart(newCart)
-    await syncCartWithAPI(newCart)
+    return syncCartWithAPI(newCart)
   }
 
   const updateQuantity = async (productId, quantity) => {
     if (quantity <= 0) {
-      removeFromCart(productId)
-      return
+      return removeFromCart(productId)
     }
 
-    const newCart = cart.map(item => 
-      item.id === productId 
-        ? { ...item, quantity } 
+    const newCart = cart.map(item =>
+      item.id === productId
+        ? { ...item, quantity }
         : item
     )
-    
+
     setCart(newCart)
-    await syncCartWithAPI(newCart)
+    return syncCartWithAPI(newCart)
   }
 
   const getCartFromAPI = async (userId) => {
@@ -95,36 +100,46 @@ export function CartProvider({ children }) {
       setLoading(true)
       const response = await fetch(`https://fakestoreapi.com/carts/user/${userId}`)
       const data = await response.json()
-      
+
       if (data && data.length > 0) {
-        // Get the most recent cart
-        const latestCart = data.reduce((prev, current) => 
+        const latestCart = data.reduce((prev, current) =>
           new Date(prev.date) > new Date(current.date) ? prev : current
         )
-        
-        setCart(latestCart.products.map(item => ({
+
+        const formattedCart = latestCart.products.map(item => ({
           ...item,
-          id: item.productId // Map productId to id for consistency
-        })))
+          id: item.productId
+        }))
+
+        setCart(formattedCart)
+        return formattedCart
       }
+      return []
     } catch (err) {
       console.error('Error fetching cart:', err)
       setError(err.message)
+      throw err
     } finally {
       setLoading(false)
     }
   }
 
+  const clearCart = () => {
+    setCart([])
+    localStorage.removeItem('cart')
+  }
+
   return (
-    <CartContext.Provider 
-      value={{ 
-        cart, 
-        loading, 
+    <CartContext.Provider
+      value={{
+        cart,
+        loading,
         error,
-        addToCart, 
-        removeFromCart, 
+        addToCart,
+        removeFromCart,
         updateQuantity,
-        getCartFromAPI
+        getCartFromAPI,
+        clearCart
       }}
     >
       {children}
@@ -134,6 +149,8 @@ export function CartProvider({ children }) {
 
 export function useCart() {
   const context = useContext(CartContext)
-  if (!context) throw new Error('useCart must be used within CartProvider')
+  if (!context) {
+    throw new Error('useCart must be used within a CartProvider')
+  }
   return context
 }
